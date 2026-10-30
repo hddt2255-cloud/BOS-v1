@@ -1,0 +1,987 @@
+/**
+ * ============================================================================
+ * SiBOS V1 - GOOGLE APPS SCRIPT BACKEND (Kode.gs / Code.gs)
+ * Aplikasi Pengelolaan Dana BOS, RKAS, Belanja SI, Rekap & Rekening Koran
+ * ============================================================================
+ * Sheet 1    : Database Master RKAS
+ * Sheet 2    : Database Belanja
+ * Sheet 3    : SI
+ * Sheet 4    : Surat Transfer
+ * Sheet 5    : Rekap Serapan
+ * Sheet 6    : Rekening Koran
+ * Sheet 7-18 : Januari s/d Desember (Perbulan)
+ * Sheet 19   : Role Pengguna
+ * Sheet 20   : Realisasi Distribusi
+ * ============================================================================
+ */
+
+var SHEET_NAMES = {
+  MASTER_RKAS: "Database Master RKAS",
+  BELANJA: "Database Belanja",
+  SI: "SI",
+  SURAT_TRANSFER: "Surat Transfer",
+  REKAP_SERAPAN: "Rekap Serapan",
+  REKENING_KORAN: "Rekening Koran",
+  MONTHS: [
+    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+  ],
+  USERS: "Role Pengguna",
+  DISTRIBUSI: "Realisasi Distribusi"
+};
+
+var ORDERED_SHEETS = [
+  SHEET_NAMES.MASTER_RKAS,
+  SHEET_NAMES.BELANJA,
+  SHEET_NAMES.SI,
+  SHEET_NAMES.SURAT_TRANSFER,
+  SHEET_NAMES.REKAP_SERAPAN,
+  SHEET_NAMES.REKENING_KORAN,
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+  SHEET_NAMES.USERS,
+  SHEET_NAMES.DISTRIBUSI
+];
+
+var SHEET_HEADERS = {
+  "Database Master RKAS": ["No. Urut", "Kode Rekening", "Kode Kegiatan", "Uraian Kegiatan", "Jumlah", "Belanja Operasi", "Belanja Modal", "Level", "Status Aksi", "Keterangan", "NPSN"],
+  "Database Belanja": ["NO", "BELANJA", "NOMOR REKENING", "NAMA BANK", "ATAS NAMA", "NPWP", "TOTAL", "SUMBER DANA", "TGL TRANSAKSI SI", "BULAN", "MASTER NO", "SUB ITEMS JSON", "TGL INPUT", "ID", "NPSN"],
+  "SI": ["NO", "BELANJA", "NOMOR REKENING", "NAMA BANK", "ATAS NAMA", "NPWP", "TOTAL", "SUMBER DANA", "TGL TRANSAKSI SI", "BULAN", "NPSN"],
+  "Surat Transfer": ["NO", "TANGGAL SURAT", "NOMOR SURAT", "TGL TRANSAKSI SI", "NOMOR REKENING SEKOLAH", "NAMA REKENING / SEKOLAH", "UNIT KERJA", "ALAMAT", "KEPALA SEKOLAH", "BENDAHARA", "NO HP", "EMAIL", "BANK TUJUAN", "JUMLAH TOTAL", "TERBILANG", "NPSN"],
+  "Rekap Serapan": ["No. Urut", "Kode Rekening", "Kode Kegiatan", "Uraian Master RKAS", "Pagu Target (Rp)", "Realisasi Belanja (Rp)", "Sisa Pagu (Rp)", "Status", "Keterangan Catatan", "NPSN"],
+  "Rekening Koran": ["NO", "TGL", "DEBIT", "KREDIT", "TOTAL", "JENIS TRANSAKSI", "KETERANGAN", "ID TRANSAKSI", "NPSN"],
+  "PERBULAN_DEFAULT": ["No. Urut", "Kode Rekening", "Kode Program", "Uraian", "Volume", "Satuan", "Tarif Harga", "Jumlah", "Level", "NPSN"],
+  "Role Pengguna": ["NO", "ROLE", "USER / NPSN", "PASSWORD", "NAMA SEKOLAH", "KEPALA SEKOLAH", "BENDAHARA SEKOLAH", "ALAMAT", "KABUPATEN", "PROVINSI", "TAHUN ANGGARAN", "SUMBER DANA", "NO REKENING", "NAMA BANK", "EMAIL", "NO HP", "SALDO AWAL", "UPDATED AT", "EXTRA JSON"],
+  "Realisasi Distribusi": ["NO", "TANGGAL", "MASTER NO", "KODE REKENING", "KODE KEGIATAN", "NAMA BARANG", "JUMLAH KELUAR", "PENERIMA", "KETERANGAN", "ID", "NPSN"]
+};
+
+// Kolom (1-based index) yang wajib diformat sebagai Plain Text ("@") agar kode seperti "03.03." tidak berubah jadi Tanggal
+var TEXT_COLUMNS_BY_SHEET = {
+  "Database Master RKAS": [2, 3, 8, 9, 10, 11],
+  "Database Belanja": [2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15],
+  "SI": [2, 3, 4, 5, 6, 8, 9, 10, 11],
+  "Surat Transfer": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16],
+  "Rekap Serapan": [2, 3, 4, 8, 9, 10],
+  "Rekening Koran": [2, 6, 7, 8, 9],
+  "PERBULAN_DEFAULT": [2, 3, 4, 5, 6, 9, 10],
+  "Role Pengguna": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19],
+  "Realisasi Distribusi": [2, 3, 4, 5, 6, 8, 9, 10, 11]
+};
+
+function doGet(e) {
+  return HtmlService.createHtmlOutputFromFile("Index")
+    .setTitle("SiBOS V1 - Aplikasi Pengelolaan Dana BOS & Belanja SI")
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag("viewport", "width=device-width, initial-scale=1.0");
+}
+
+function onOpen() {
+  try {
+    SpreadsheetApp.getUi()
+      .createMenu("SiBOS V1")
+      .addItem("Inisialisasi / Perbaiki Semua Sheet", "ensureAllSheets")
+      .addToUi();
+  } catch (err) {}
+}
+
+/**
+ * Helper: Ambil peta sheet sekaligus dalam 1 panggilan API (sangat cepat)
+ */
+function getSheetMapGs(ss) {
+  var sheets = ss.getSheets();
+  var map = {};
+  for (var i = 0; i < sheets.length; i++) {
+    map[sheets[i].getName()] = sheets[i];
+  }
+  return map;
+}
+
+/**
+ * Helper: Pulihkan Kode Kegiatan / Kode Program yang sempat diubah otomatis oleh Google Sheets menjadi Date
+ */
+function normalizeKodeKegiatanGs(rawVal, level, parentStdPrefix, isPerBulan) {
+  if (rawVal === null || rawVal === undefined || rawVal === "") return "";
+  if (rawVal instanceof Date) {
+    var d = rawVal.getDate();
+    var m = rawVal.getMonth() + 1;
+    var y = rawVal.getFullYear();
+    var dd = d < 10 ? "0" + d : "" + d;
+    var mm = m < 10 ? "0" + m : "" + m;
+
+    if (level === "kegiatan" || (parentStdPrefix && !isPerBulan)) {
+      var pfx = parentStdPrefix || (y >= 2000 && y <= 2099 ? ("0" + (y - 2000)).slice(-2) : "03");
+      return pfx + "." + mm + "." + dd + ".";
+    }
+    return mm + "." + dd + ".";
+  }
+
+  var s = String(rawVal).trim();
+  var matchDate = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (matchDate) {
+    var p1 = ("0" + matchDate[1]).slice(-2);
+    var p2 = ("0" + matchDate[2]).slice(-2);
+    var yr = parseInt(matchDate[3], 10);
+    if (level === "kegiatan" || parentStdPrefix) {
+      var pfx2 = parentStdPrefix || (yr >= 2000 ? ("0" + (yr - 2000)).slice(-2) : "03");
+      return pfx2 + "." + p2 + "." + p1 + ".";
+    }
+    return p2 + "." + p1 + ".";
+  }
+
+  return s;
+}
+
+/**
+ * Memastikan kolom teks diformat sebagai plain text ('@') agar format kode rekening/kegiatan tidak rusak
+ */
+function applyPlainTextColumnsGs(sheet, sheetName, rowCount) {
+  if (!sheet || rowCount <= 0) return;
+  var colIndices = TEXT_COLUMNS_BY_SHEET[sheetName] || TEXT_COLUMNS_BY_SHEET["PERBULAN_DEFAULT"] || [];
+  for (var c = 0; c < colIndices.length; c++) {
+    var col = colIndices[c];
+    if (col <= sheet.getMaxColumns()) {
+      sheet.getRange(2, col, rowCount, 1).setNumberFormat("@");
+    }
+  }
+}
+
+/**
+ * Inisialisasi & Pengurutan 20 Sheet
+ */
+function ensureAllSheets() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return;
+
+  var sheetMap = getSheetMapGs(ss);
+
+  for (var i = 0; i < ORDERED_SHEETS.length; i++) {
+    var sheetName = ORDERED_SHEETS[i];
+    var sheet = sheetMap[sheetName];
+    var headers = SHEET_HEADERS[sheetName] || SHEET_HEADERS["PERBULAN_DEFAULT"];
+
+    if (!sheet) {
+      sheet = ss.insertSheet(sheetName);
+      sheetMap[sheetName] = sheet;
+    }
+
+    if (sheet.getLastRow() === 0) {
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      var headerRange = sheet.getRange(1, 1, 1, headers.length);
+      headerRange.setFontWeight("bold");
+      headerRange.setBackground("#e2e8f0");
+      headerRange.setBorder(true, true, true, true, true, true);
+      sheet.setFrozenRows(1);
+    }
+
+    // Role Pengguna baris pertama
+    if (sheetName === SHEET_NAMES.USERS && sheet.getLastRow() === 1) {
+      applyPlainTextColumnsGs(sheet, SHEET_NAMES.USERS, 1);
+      sheet.appendRow([
+        1,
+        "Admin",
+        "20231556",
+        "hdt123",
+        "SDIT ANNISA",
+        "",
+        "",
+        "",
+        "Kota Bekasi",
+        "Jawa Barat",
+        "2026",
+        "BOS Reguler",
+        "",
+        "Bank BJB Kantor Cabang Jatiasih",
+        "",
+        "",
+        0,
+        new Date().toISOString(),
+        "{}"
+      ]);
+    }
+  }
+
+  // Pindahkan urutan tab
+  for (var idx = 0; idx < ORDERED_SHEETS.length; idx++) {
+    var s = sheetMap[ORDERED_SHEETS[idx]];
+    if (s) {
+      try {
+        ss.setActiveSheet(s);
+        ss.moveActiveSheet(idx + 1);
+      } catch (e) {}
+    }
+  }
+}
+
+/**
+ * Terbilang Rupiah Helper
+ */
+function angkaToTerbilangGs(n) {
+  var nominal = Math.abs(Math.floor(Number(n) || 0));
+  if (nominal === 0) return "Nol Rupiah";
+  var satuan = ["", "Satu", "Dua", "Tiga", "Empat", "Lima", "Enam", "Tujuh", "Delapan", "Sembilan", "Sepuluh", "Sebelas"];
+
+  function bilang(val) {
+    if (val < 12) return satuan[val];
+    if (val < 20) return bilang(val - 10) + " Belas";
+    if (val < 100) return bilang(Math.floor(val / 10)) + " Puluh " + bilang(val % 10);
+    if (val < 200) return "Seratus " + bilang(val - 100);
+    if (val < 1000) return bilang(Math.floor(val / 100)) + " Ratus " + bilang(val % 100);
+    if (val < 2000) return "Seribu " + bilang(val - 1000);
+    if (val < 1000000) return bilang(Math.floor(val / 1000)) + " Ribu " + bilang(val % 1000);
+    if (val < 1000000000) return bilang(Math.floor(val / 1000000)) + " Juta " + bilang(val % 1000000);
+    if (val < 1000000000000) return bilang(Math.floor(val / 1000000000)) + " Milyar " + bilang(val % 1000000000);
+    return bilang(Math.floor(val / 1000000000000)) + " Triliun " + bilang(val % 1000000000000);
+  }
+
+  var hasil = bilang(nominal).replace(/\s+/g, " ").trim();
+  return hasil ? hasil + " Rupiah" : "Nol Rupiah";
+}
+
+function parseIndoDateToTsGs(dateStr) {
+  if (!dateStr || typeof dateStr !== "string" || !dateStr.trim()) return 0;
+  var parts = dateStr.trim().split("/");
+  if (parts.length === 3) {
+    var d = parseInt(parts[0], 10);
+    var m = parseInt(parts[1], 10) - 1;
+    var y = parseInt(parts[2], 10);
+    if (!isNaN(d) && !isNaN(m) && !isNaN(y)) {
+      return new Date(y, m, d).getTime();
+    }
+  }
+  return 0;
+}
+
+/**
+ * ============================================================================
+ * API: VERIFIKASI PASSWORD ADMIN LANGSUNG DARI SHEET "Role Pengguna" (KOLOM PASSWORD)
+ * ============================================================================
+ */
+function apiVerifyAdminLogin(inputPass) {
+  ensureAllSheets();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NAMES.USERS);
+  if (!sheet || sheet.getLastRow() <= 1) {
+    return {
+      success: false,
+      message: "Sheet 'Role Pengguna' masih kosong. Silakan isi password langsung di Spreadsheet pada Sheet 'Role Pengguna' (Kolom PASSWORD)."
+    };
+  }
+
+  var pClean = String(inputPass || "").trim();
+  if (!pClean) {
+    return { success: false, message: "Password wajib diisi!" };
+  }
+
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).getValues();
+  var hasConfiguredPassword = false;
+
+  for (var i = 0; i < rows.length; i++) {
+    var rRole = String(rows[i][1] || "").trim();
+    var rUser = String(rows[i][2] || "").trim();
+    var rPass = String(rows[i][3] || "").trim();
+
+    // Gunakan kolom PASSWORD (kolom D), atau fallback ke kolom C jika kolom D kosong
+    var candidatePass = rPass !== "" ? rPass : rUser;
+    if (!candidatePass) continue;
+
+    hasConfiguredPassword = true;
+
+    if (pClean === candidatePass) {
+      return {
+        success: true,
+        role: rRole || "Admin"
+      };
+    }
+  }
+
+  if (!hasConfiguredPassword) {
+    return {
+      success: false,
+      message: "Kolom PASSWORD di Sheet 'Role Pengguna' belum diisi. Silakan tulis password langsung di Spreadsheet pada Sheet 'Role Pengguna'."
+    };
+  }
+
+  return {
+    success: false,
+    message: "Password Admin salah! Pastikan sesuai dengan password di Sheet 'Role Pengguna'."
+  };
+}
+
+/**
+ * Simpan perubahan User & Password Admin langsung ke Sheet "Role Pengguna"
+ */
+function apiUpdateAdminCredentials(newUser, newPassword) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    ensureAllSheets();
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(SHEET_NAMES.USERS);
+    var uClean = String(newUser || "").trim();
+    var pClean = String(newPassword || "").trim();
+    if (!pClean) {
+      return { success: false, message: "Password baru tidak boleh kosong." };
+    }
+    var lastRow = sheet.getLastRow();
+    applyPlainTextColumnsGs(sheet, SHEET_NAMES.USERS, Math.max(lastRow, 5));
+    if (lastRow > 1) {
+      if (uClean) sheet.getRange(2, 3).setValue(uClean);
+      sheet.getRange(2, 4).setValue(pClean);
+      if (!String(sheet.getRange(2, 2).getValue() || "").trim()) {
+        sheet.getRange(2, 2).setValue("Admin");
+      }
+    } else {
+      sheet.appendRow([
+        1, "Admin", uClean || "20231556", pClean, "SDIT ANNISA",
+        "", "", "", "Kota Bekasi", "Jawa Barat", "2026",
+        "BOS Reguler", "", "Bank BJB Kantor Cabang Jatiasih", "", "", 0, new Date().toISOString(), "{}"
+      ]);
+    }
+    return { success: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function apiGetAccounts() {
+  ensureAllSheets();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NAMES.USERS);
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
+
+  var data = sheet.getRange(2, 1, lastRow - 1, 19).getValues();
+  var accounts = [];
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    var role = String(row[1] || "").trim();
+    var userOrNpsn = String(row[2] || "").trim();
+    var namaSekolah = String(row[4] || "").trim();
+    if (namaSekolah === "PANEL SUPER ADMIN SIBOS" || namaSekolah === "SD NEGERI") namaSekolah = "SDIT ANNISA";
+    if (userOrNpsn === "20253978" || userOrNpsn.toLowerCase() === "superadmin") userOrNpsn = "20231556";
+    var kepalaSekolah = String(row[5] || "").trim();
+    if (kepalaSekolah === "Administrator") kepalaSekolah = "";
+    var extraCfg = {};
+    try { extraCfg = JSON.parse(String(row[18] || "{}")); } catch (e) { extraCfg = {}; }
+    var resolvedNpsn = extraCfg.schoolNpsn || (/^\d{6,10}$/.test(userOrNpsn) ? userOrNpsn : "");
+    if (resolvedNpsn === "20253978") resolvedNpsn = "20231556";
+    if (!userOrNpsn && !namaSekolah && !resolvedNpsn) continue;
+    accounts.push({
+      npsn: resolvedNpsn || userOrNpsn || "20231556",
+      user: userOrNpsn,
+      namaSekolah: namaSekolah || "SDIT ANNISA",
+      kepalaSekolah: kepalaSekolah || "",
+      role: role || "Admin"
+    });
+  }
+  return accounts;
+}
+
+function apiSaveAccounts(accountsList, deletedNpsn) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    ensureAllSheets();
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(SHEET_NAMES.USERS);
+    var lastRow = sheet.getLastRow();
+    if (lastRow > 1 && Array.isArray(accountsList) && accountsList.length > 0) {
+      var rows = sheet.getRange(2, 1, lastRow - 1, 19).getValues();
+      var acc = accountsList[0];
+      if (acc && rows.length > 0) {
+        if (acc.namaSekolah) rows[0][4] = String(acc.namaSekolah);
+        if (acc.kepalaSekolah !== undefined) rows[0][5] = String(acc.kepalaSekolah);
+        applyPlainTextColumnsGs(sheet, SHEET_NAMES.USERS, rows.length);
+        sheet.getRange(2, 1, rows.length, 19).setValues(rows);
+      }
+    }
+    if (deletedNpsn) removeSchoolDataByNpsn(ss, String(deletedNpsn).trim());
+    return { success: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function removeSchoolDataByNpsn(ss, targetNpsn) {
+  if (!targetNpsn) return;
+  for (var i = 0; i < ORDERED_SHEETS.length; i++) {
+    var sName = ORDERED_SHEETS[i];
+    if (sName === SHEET_NAMES.USERS) continue;
+    var sh = ss.getSheetByName(sName);
+    if (!sh || sh.getLastRow() <= 1) continue;
+    var colCount = sh.getLastColumn();
+    var data = sh.getRange(2, 1, sh.getLastRow() - 1, colCount).getValues();
+    var kept = [];
+    for (var r = 0; r < data.length; r++) {
+      if (String(data[r][colCount - 1] || "").trim() !== targetNpsn) kept.push(data[r]);
+    }
+    sh.getRange(2, 1, sh.getLastRow() - 1, colCount).clearContent();
+    if (kept.length > 0) {
+      applyPlainTextColumnsGs(sh, sName, kept.length);
+      sh.getRange(2, 1, kept.length, colCount).setValues(kept);
+    }
+  }
+}
+
+function apiGetSchoolData(npsn) {
+  var cleanNpsn = String(npsn || "").trim();
+  if (cleanNpsn === "20253978" || cleanNpsn.toLowerCase() === "superadmin") cleanNpsn = "20231556";
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetMap = getSheetMapGs(ss);
+
+  if (Object.keys(sheetMap).length < ORDERED_SHEETS.length) {
+    ensureAllSheets();
+    sheetMap = getSheetMapGs(ss);
+  }
+
+  var userSheet = sheetMap[SHEET_NAMES.USERS];
+  var headerInfo = {
+    npsn: cleanNpsn || "20231556", namaSekolah: "SDIT ANNISA", alamat: "", kabupaten: "Kota Bekasi",
+    provinsi: "Jawa Barat", tahunAnggaran: "2026", sumberDana: "BOS Reguler",
+    totalPenerimaan: 0, kepalaSekolah: "", bendaharaSekolah: "",
+    noRekening: "", namaBank: "Bank BJB Kantor Cabang Jatiasih", email: "", noHp: ""
+  };
+  var saldoAwal = 0;
+  var updatedAt = "";
+  var extraConfig = {};
+
+  if (userSheet && userSheet.getLastRow() > 1) {
+    var uRows = userSheet.getRange(2, 1, userSheet.getLastRow() - 1, 19).getValues();
+    var targetRow = null;
+    for (var u = 0; u < uRows.length; u++) {
+      var rUser = String(uRows[u][2] || "").trim();
+      var rExt = {};
+      try { rExt = JSON.parse(String(uRows[u][18] || "{}")); } catch (e) {}
+      if (rUser === cleanNpsn || String(rExt.schoolNpsn || "").trim() === cleanNpsn) {
+        targetRow = uRows[u];
+        extraConfig = rExt;
+        break;
+      }
+    }
+    if (!targetRow && uRows.length > 0) {
+      targetRow = uRows[0];
+      try { extraConfig = JSON.parse(String(uRows[0][18] || "{}")); } catch (e) {}
+    }
+
+    if (targetRow) {
+      var namaSek = String(targetRow[4] || "").trim();
+      if (!namaSek || namaSek === "PANEL SUPER ADMIN SIBOS" || namaSek === "SD NEGERI") namaSek = "SDIT ANNISA";
+      headerInfo.namaSekolah = namaSek;
+      headerInfo.kepalaSekolah = String(targetRow[5] || "") === "Administrator" ? "" : String(targetRow[5] || "");
+      headerInfo.bendaharaSekolah = String(targetRow[6] || "") === "-" ? "" : String(targetRow[6] || "");
+      headerInfo.alamat = String(targetRow[7] || "") === "-" ? "" : String(targetRow[7] || "");
+      headerInfo.kabupaten = String(targetRow[8] || "Kota Bekasi");
+      headerInfo.provinsi = String(targetRow[9] || "Jawa Barat");
+      headerInfo.tahunAnggaran = String(targetRow[10] || "2026");
+      headerInfo.sumberDana = String(targetRow[11] || "BOS Reguler");
+      headerInfo.noRekening = String(targetRow[12] || "");
+      headerInfo.namaBank = String(targetRow[13] || "Bank BJB Kantor Cabang Jatiasih");
+      headerInfo.email = String(targetRow[14] || "") === "-" ? "" : String(targetRow[14] || "");
+      headerInfo.noHp = String(targetRow[15] || "") === "-" ? "" : String(targetRow[15] || "");
+      saldoAwal = Number(targetRow[16] || 0);
+      updatedAt = String(targetRow[17] || "");
+    }
+  }
+
+  var manualPurchasedMap = extraConfig.manualPurchasedMap || {};
+  var manualKeteranganTextMap = extraConfig.manualKeteranganTextMap || {};
+  var customLogoUrl = extraConfig.customLogoUrl || "";
+  var customKopSuratUrl = extraConfig.customKopSuratUrl || "";
+
+  var masterSheet = sheetMap[SHEET_NAMES.MASTER_RKAS];
+  var masterRkas = [];
+  var currentStdPrefix = "";
+
+  if (masterSheet && masterSheet.getLastRow() > 1) {
+    var mRows = masterSheet.getRange(2, 1, masterSheet.getLastRow() - 1, 11).getValues();
+    for (var m = 0; m < mRows.length; m++) {
+      var mr = mRows[m];
+      var uraian = String(mr[3] || "").trim();
+      if (!uraian && !mr[1] && !mr[2]) continue;
+      var noVal = mr[0] !== "" ? mr[0] : (masterRkas.length + 1);
+      var levelVal = String(mr[7] || (mr[1] ? "item" : "sub"));
+      var rawKodeKeg = mr[2];
+      var fixedKodeKeg = normalizeKodeKegiatanGs(rawKodeKeg, levelVal, currentStdPrefix, false);
+
+      var stdMatch = fixedKodeKeg.match(/^(\d{2})\./);
+      if (stdMatch) currentStdPrefix = stdMatch[1];
+
+      var statusAksi = String(mr[8] || "").trim().toLowerCase();
+      var ketManual = String(mr[9] || "").trim();
+      if (statusAksi === "sudah dibelanjakan" || statusAksi === "ya" || statusAksi === "true") manualPurchasedMap[noVal] = true;
+      if (ketManual) manualKeteranganTextMap[noVal] = ketManual;
+      masterRkas.push({
+        no: isNaN(Number(noVal)) ? noVal : Number(noVal),
+        kodeRekening: String(mr[1] || ""),
+        kodeKegiatan: fixedKodeKeg,
+        uraian: uraian,
+        jumlah: Number(mr[4] || 0),
+        operasi: Number(mr[5] || 0),
+        modal: Number(mr[6] || 0),
+        level: levelVal
+      });
+    }
+  }
+
+  var belanjaSheet = sheetMap[SHEET_NAMES.BELANJA];
+  var belanjaBankList = [];
+  if (belanjaSheet && belanjaSheet.getLastRow() > 1) {
+    var bRows = belanjaSheet.getRange(2, 1, belanjaSheet.getLastRow() - 1, 15).getValues();
+    for (var b = 0; b < bRows.length; b++) {
+      var br = bRows[b];
+      var namaBelanja = String(br[1] || "").trim();
+      if (!namaBelanja && !br[6]) continue;
+      var subItemsParsed = undefined;
+      if (br[11]) { try { subItemsParsed = JSON.parse(String(br[11])); } catch (e) {} }
+      var tglSiVal = br[8];
+      if (tglSiVal instanceof Date) {
+        tglSiVal = ("0" + tglSiVal.getDate()).slice(-2) + "/" + ("0" + (tglSiVal.getMonth() + 1)).slice(-2) + "/" + tglSiVal.getFullYear();
+      } else {
+        tglSiVal = String(tglSiVal || "");
+      }
+      belanjaBankList.push({
+        id: br[13] ? (isNaN(Number(br[13])) ? String(br[13]) : Number(br[13])) : (Date.now() + b),
+        belanja: namaBelanja,
+        noRek: String(br[2] || "-"),
+        namaBank: String(br[3] || "-"),
+        atasNama: String(br[4] || "-"),
+        npwp: String(br[5] || "-"),
+        total: Number(br[6] || 0),
+        sumberDana: String(br[7] || "BOS REGULER"),
+        tglTransaksiSI: tglSiVal,
+        bulan: String(br[9] || "Januari"),
+        masterNo: br[10] !== "" ? br[10] : null,
+        subItems: subItemsParsed,
+        tglInput: String(br[12] || "")
+      });
+    }
+  }
+
+  var rekSheet = sheetMap[SHEET_NAMES.REKENING_KORAN];
+  var danaMasukList = [];
+  if (Array.isArray(extraConfig.danaMasukList)) {
+    danaMasukList = extraConfig.danaMasukList;
+  } else if (rekSheet && rekSheet.getLastRow() > 1) {
+    var rkRows = rekSheet.getRange(2, 1, rekSheet.getLastRow() - 1, 9).getValues();
+    for (var k = 0; k < rkRows.length; k++) {
+      var kr = rkRows[k];
+      var jenis = String(kr[5] || "").trim().toUpperCase();
+      if (jenis === "SALDO_AWAL" && !saldoAwal) {
+        saldoAwal = Number(kr[3] || 0);
+      } else if (jenis === "DANA_MASUK") {
+        var tglDm = kr[1];
+        if (tglDm instanceof Date) {
+          tglDm = ("0" + tglDm.getDate()).slice(-2) + "/" + ("0" + (tglDm.getMonth() + 1)).slice(-2) + "/" + tglDm.getFullYear();
+        }
+        danaMasukList.push({
+          id: String(kr[7] || ("dm-" + (k + 1))),
+          tgl: String(tglDm || ""),
+          kredit: Number(kr[3] || 0),
+          keterangan: String(kr[6] || "Dana Masuk (Penerimaan)")
+        });
+      }
+    }
+  }
+
+  var perBulanData = {};
+  for (var mIdx = 0; mIdx < SHEET_NAMES.MONTHS.length; mIdx++) {
+    var mName = SHEET_NAMES.MONTHS[mIdx];
+    perBulanData[mName] = [];
+    var mSheet = sheetMap[mName];
+    var mStdPrefix = "";
+    if (mSheet && mSheet.getLastRow() > 1) {
+      var pRows = mSheet.getRange(2, 1, mSheet.getLastRow() - 1, 10).getValues();
+      for (var p = 0; p < pRows.length; p++) {
+        var pr = pRows[p];
+        var pUraian = String(pr[3] || "").trim();
+        if (!pUraian && !pr[1] && !pr[2]) continue;
+        var pLevel = String(pr[8] || (pr[1] ? "item" : "sub"));
+        var rawProg = pr[2];
+        var fixedProg = normalizeKodeKegiatanGs(rawProg, pLevel, mStdPrefix, true);
+        var mpMatch = fixedProg.match(/^(\d{2})\./);
+        if (mpMatch) mStdPrefix = mpMatch[1];
+
+        perBulanData[mName].push({
+          no: pr[0] !== "" ? (isNaN(Number(pr[0])) ? pr[0] : Number(pr[0])) : (perBulanData[mName].length + 1),
+          kodeRekening: String(pr[1] || ""),
+          kodeProgram: fixedProg,
+          uraian: pUraian,
+          volume: pr[4] !== "" ? String(pr[4]) : "",
+          satuan: String(pr[5] || ""),
+          tarif: pr[6] !== "" ? Number(pr[6]) : "",
+          jumlah: Number(pr[7] || 0),
+          level: pLevel
+        });
+      }
+    }
+  }
+
+  // Baca Sheet 20: Realisasi Distribusi
+  var distSheet = sheetMap[SHEET_NAMES.DISTRIBUSI];
+  var distribusiList = [];
+  if (distSheet && distSheet.getLastRow() > 1) {
+    var distRows = distSheet.getRange(2, 1, distSheet.getLastRow() - 1, 11).getValues();
+    for (var d = 0; d < distRows.length; d++) {
+      var dr = distRows[d];
+      if (!dr[1] && !dr[5]) continue;
+      distribusiList.push({
+        id: String(dr[9] || (d + 1)),
+        tanggal: String(dr[1] || ""),
+        masterNo: dr[2] !== "" ? dr[2] : null,
+        kodeRekening: String(dr[3] || ""),
+        kodeKegiatan: String(dr[4] || ""),
+        namaBarang: String(dr[5] || ""),
+        jumlahKeluar: Number(dr[6] || 0),
+        penerima: String(dr[7] || ""),
+        keterangan: String(dr[8] || "")
+      });
+    }
+  }
+
+  return {
+    updatedAt: updatedAt || new Date().toISOString(),
+    headerInfo: headerInfo,
+    masterRkas: masterRkas,
+    perBulanData: perBulanData,
+    belanjaBankList: belanjaBankList,
+    danaMasukList: danaMasukList,
+    distribusiList: distribusiList,
+    saldoAwal: Number(saldoAwal || 0),
+    manualPurchasedMap: manualPurchasedMap,
+    manualKeteranganTextMap: manualKeteranganTextMap,
+    customLogoUrl: customLogoUrl,
+    customKopSuratUrl: customKopSuratUrl
+  };
+}
+
+function replaceRowsForNpsn(sheet, colCount, targetNpsn, newRowsForSchool) {
+  if (!sheet) return;
+  var lastRow = sheet.getLastRow();
+  var otherRows = [];
+
+  if (lastRow > 1) {
+    var existing = sheet.getRange(2, 1, lastRow - 1, colCount).getValues();
+    for (var i = 0; i < existing.length; i++) {
+      var rowNpsn = String(existing[i][colCount - 1] || "").trim();
+      if (rowNpsn !== "" && rowNpsn !== targetNpsn) {
+        otherRows.push(existing[i]);
+      }
+    }
+    sheet.getRange(2, 1, lastRow - 1, colCount).clearContent();
+  }
+
+  var combined = otherRows.concat(newRowsForSchool || []);
+  if (combined.length > 0) {
+    applyPlainTextColumnsGs(sheet, sheet.getName(), combined.length);
+    sheet.getRange(2, 1, combined.length, colCount).setValues(combined);
+  }
+}
+
+function apiSaveSchoolData(npsn, payload) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  try {
+    ensureAllSheets();
+    var cleanNpsn = String(npsn || (payload && payload.headerInfo && payload.headerInfo.npsn) || "20231556").trim();
+    if (cleanNpsn === "20253978" || cleanNpsn.toLowerCase() === "superadmin") cleanNpsn = "20231556";
+
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheetMap = getSheetMapGs(ss);
+
+    var nowIso = (payload && payload.updatedAt) || new Date().toISOString();
+    var hInfo = (payload && payload.headerInfo) || {};
+    var masterRkas = (payload && Array.isArray(payload.masterRkas)) ? payload.masterRkas : [];
+    var belanjaList = (payload && Array.isArray(payload.belanjaBankList)) ? payload.belanjaBankList : [];
+    var perBulanData = (payload && payload.perBulanData) || {};
+    var danaMasukList = (payload && Array.isArray(payload.danaMasukList)) ? payload.danaMasukList : [];
+    var distribusiList = (payload && Array.isArray(payload.distribusiList)) ? payload.distribusiList : [];
+    var saldoAwal = Number((payload && payload.saldoAwal) || 0);
+    var manualPurchasedMap = (payload && payload.manualPurchasedMap) || {};
+    var manualKeteranganTextMap = (payload && payload.manualKeteranganTextMap) || {};
+    var customLogoUrl = (payload && payload.customLogoUrl) || "";
+    var customKopSuratUrl = (payload && payload.customKopSuratUrl) || "";
+
+    var realizedByNo = {};
+    var realizedByUraian = {};
+    for (var b = 0; b < belanjaList.length; b++) {
+      var tx = belanjaList[b];
+      if (!tx) continue;
+      var amt = Number(tx.total || 0);
+      if (Array.isArray(tx.subItems) && tx.subItems.length > 0) {
+        for (var s = 0; s < tx.subItems.length; s++) {
+          var sub = tx.subItems[s];
+          if (sub && sub.no !== undefined && sub.no !== null) {
+            realizedByNo[String(sub.no)] = (realizedByNo[String(sub.no)] || 0) + Number(sub.jumlah || 0);
+          }
+        }
+      } else if (tx.masterNo !== undefined && tx.masterNo !== null && tx.masterNo !== "") {
+        realizedByNo[String(tx.masterNo)] = (realizedByNo[String(tx.masterNo)] || 0) + amt;
+      } else if (tx.belanja) {
+        realizedByUraian[String(tx.belanja).trim().toLowerCase()] = (realizedByUraian[String(tx.belanja).trim().toLowerCase()] || 0) + amt;
+      }
+    }
+
+    // 1. Sheet 1: Master RKAS
+    var masterRows = [];
+    var mStdPrefix = "";
+    for (var i = 0; i < masterRkas.length; i++) {
+      var m = masterRkas[i];
+      var mLevel = String(m.level || "item");
+      var cleanKodeKeg = normalizeKodeKegiatanGs(m.kodeKegiatan, mLevel, mStdPrefix, false);
+      var mStdMatch = cleanKodeKeg.match(/^(\d{2})\./);
+      if (mStdMatch) mStdPrefix = mStdMatch[1];
+
+      var relVal = (realizedByNo[String(m.no)] || 0) + (realizedByUraian[String(m.uraian || "").trim().toLowerCase()] || 0);
+      var isDone = !!manualPurchasedMap[m.no] || (Number(m.jumlah || 0) > 0 && relVal >= Number(m.jumlah || 0));
+
+      masterRows.push([
+        m.no !== undefined ? m.no : (i + 1), String(m.kodeRekening || ""), cleanKodeKeg,
+        String(m.uraian || ""), Number(m.jumlah || 0), Number(m.operasi || 0),
+        Number(m.modal || 0), mLevel, isDone ? "Sudah Dibelanjakan" : "Belum Dibelanjakan",
+        String(manualKeteranganTextMap[m.no] || ""), cleanNpsn
+      ]);
+    }
+    replaceRowsForNpsn(sheetMap[SHEET_NAMES.MASTER_RKAS], 11, cleanNpsn, masterRows);
+
+    // 2. Sheet 2: Database Belanja
+    var belanjaRows = [];
+    for (var j = 0; j < belanjaList.length; j++) {
+      var item = belanjaList[j];
+      belanjaRows.push([
+        j + 1, String(item.belanja || ""), String(item.noRek || "-"), String(item.namaBank || "-"),
+        String(item.atasNama || "-"), String(item.npwp || "-"), Number(item.total || 0),
+        String(item.sumberDana || "BOS REGULER"), String(item.tglTransaksiSI || "-"),
+        String(item.bulan || "Januari"), item.masterNo !== undefined && item.masterNo !== null ? String(item.masterNo) : "",
+        Array.isArray(item.subItems) && item.subItems.length > 0 ? JSON.stringify(item.subItems) : "",
+        String(item.tglInput || ""), String(item.id || (j + 1)), cleanNpsn
+      ]);
+    }
+    replaceRowsForNpsn(sheetMap[SHEET_NAMES.BELANJA], 15, cleanNpsn, belanjaRows);
+
+    // 3. Sheet 3: SI
+    var siRows = [];
+    for (var sIdx = 0; sIdx < belanjaList.length; sIdx++) {
+      var siItem = belanjaList[sIdx];
+      siRows.push([
+        sIdx + 1, String(siItem.belanja || ""), String(siItem.noRek || "-"), String(siItem.namaBank || "-"),
+        String(siItem.atasNama || "-"), String(siItem.npwp || "-"), Number(siItem.total || 0),
+        String(siItem.sumberDana || "BOS REGULER"), String(siItem.tglTransaksiSI || "-"),
+        String(siItem.bulan || "Januari"), cleanNpsn
+      ]);
+    }
+    replaceRowsForNpsn(sheetMap[SHEET_NAMES.SI], 11, cleanNpsn, siRows);
+
+    // 4. Sheet 4: Surat Transfer
+    var siDateGroups = {};
+    for (var stIdx = 0; stIdx < belanjaList.length; stIdx++) {
+      var bItem = belanjaList[stIdx];
+      var dKey = String(bItem.tglTransaksiSI || "Semua").trim();
+      siDateGroups[dKey] = (siDateGroups[dKey] || 0) + Number(bItem.total || 0);
+    }
+    var suratRows = [];
+    var dateKeys = Object.keys(siDateGroups);
+    if (dateKeys.length === 0) {
+      suratRows.push([
+        1, (hInfo.kabupaten || "Bekasi") + ", " + new Date().toLocaleDateString("id-ID"), "-", "Semua",
+        String(hInfo.noRekening || ""), String(hInfo.namaSekolah || "SDIT ANNISA"), String(hInfo.namaSekolah || "SDIT ANNISA"),
+        String(hInfo.alamat || ""), String(hInfo.kepalaSekolah || ""), String(hInfo.bendaharaSekolah || ""),
+        String(hInfo.noHp || ""), String(hInfo.email || ""), String(hInfo.namaBank || "Bank BJB Kantor Cabang Jatiasih"),
+        0, "Nol Rupiah", cleanNpsn
+      ]);
+    } else {
+      for (var dk = 0; dk < dateKeys.length; dk++) {
+        var tglKey = dateKeys[dk];
+        var nomTanggal = siDateGroups[tglKey];
+        suratRows.push([
+          dk + 1, (hInfo.kabupaten || "Bekasi") + ", " + tglKey, "-", tglKey,
+          String(hInfo.noRekening || ""), String(hInfo.namaSekolah || "SDIT ANNISA"), String(hInfo.namaSekolah || "SDIT ANNISA"),
+          String(hInfo.alamat || ""), String(hInfo.kepalaSekolah || ""), String(hInfo.bendaharaSekolah || ""),
+          String(hInfo.noHp || ""), String(hInfo.email || ""), String(hInfo.namaBank || "Bank BJB Kantor Cabang Jatiasih"),
+          nomTanggal, angkaToTerbilangGs(nomTanggal), cleanNpsn
+        ]);
+      }
+    }
+    replaceRowsForNpsn(sheetMap[SHEET_NAMES.SURAT_TRANSFER], 16, cleanNpsn, suratRows);
+
+    // 5. Sheet 5: Rekap Serapan
+    var rekapRows = [];
+    var rekapStdPrefix = "";
+    for (var rk = 0; rk < masterRkas.length; rk++) {
+      var rm = masterRkas[rk];
+      var rmLevel = String(rm.level || "item");
+      var rmKodeKeg = normalizeKodeKegiatanGs(rm.kodeKegiatan, rmLevel, rekapStdPrefix, false);
+      var rmStdMatch = rmKodeKeg.match(/^(\d{2})\./);
+      if (rmStdMatch) rekapStdPrefix = rmStdMatch[1];
+
+      var relBank = (realizedByNo[String(rm.no)] || 0) + (realizedByUraian[String(rm.uraian || "").trim().toLowerCase()] || 0);
+      var isManual = !!manualPurchasedMap[rm.no];
+      var paguVal = Number(rm.jumlah || 0);
+      var relFinal = isManual ? (relBank > 0 ? relBank : paguVal) : relBank;
+      var sisaVal = Math.max(0, paguVal - relFinal);
+      var isBought = isManual || relBank > 0;
+      rekapRows.push([
+        rm.no !== undefined ? rm.no : (rk + 1), String(rm.kodeRekening || ""), rmKodeKeg,
+        String(rm.uraian || ""), paguVal, relFinal, sisaVal,
+        isBought ? (isManual && relBank === 0 ? "Dibelanjakan (Manual)" : "Dibelanjakan") : "Belum",
+        String(manualKeteranganTextMap[rm.no] || "-"), cleanNpsn
+      ]);
+    }
+    replaceRowsForNpsn(sheetMap[SHEET_NAMES.REKAP_SERAPAN], 10, cleanNpsn, rekapRows);
+
+    // 6. Sheet 6: Rekening Koran
+    var rekKoranRows = [[1, "", "", saldoAwal, saldoAwal, "SALDO_AWAL", "Saldo Awal Rekening", "row-saldo-awal", cleanNpsn]];
+    var runningBal = saldoAwal;
+    var dateGroupMap = {};
+    for (var dmIdx = 0; dmIdx < danaMasukList.length; dmIdx++) {
+      var dm = danaMasukList[dmIdx];
+      var tglDmStr = String(dm.tgl || "").trim();
+      if (!tglDmStr) continue;
+      if (!dateGroupMap[tglDmStr]) dateGroupMap[tglDmStr] = { tgl: tglDmStr, debit: 0, kredit: 0, ket: [] };
+      dateGroupMap[tglDmStr].kredit += Number(dm.kredit || 0);
+      if (dm.keterangan) dateGroupMap[tglDmStr].ket.push(dm.keterangan);
+    }
+    for (var blIdx = 0; blIdx < belanjaList.length; blIdx++) {
+      var bl = belanjaList[blIdx];
+      var tglBlStr = String(bl.tglTransaksiSI || "01/01/2026").trim();
+      if (!tglBlStr) continue;
+      if (!dateGroupMap[tglBlStr]) dateGroupMap[tglBlStr] = { tgl: tglBlStr, debit: 0, kredit: 0, ket: [] };
+      dateGroupMap[tglBlStr].debit += Number(bl.total || 0);
+    }
+    var sortedDates = Object.keys(dateGroupMap).map(function(k) { return dateGroupMap[k]; });
+    sortedDates.sort(function(a, b) { return parseIndoDateToTsGs(a.tgl) - parseIndoDateToTsGs(b.tgl); });
+    for (var sd = 0; sd < sortedDates.length; sd++) {
+      var grp = sortedDates[sd];
+      runningBal = runningBal + grp.kredit - grp.debit;
+      var jenisTx = (grp.kredit > 0 && grp.debit === 0) ? "DANA_MASUK" : (grp.debit > 0 && grp.kredit === 0 ? "BELANJA_SI" : "MUTASI_GABUNGAN");
+      rekKoranRows.push([
+        sd + 2, grp.tgl, grp.debit > 0 ? grp.debit : "", grp.kredit > 0 ? grp.kredit : "",
+        runningBal, jenisTx, grp.ket.length > 0 ? grp.ket.join("; ") : "Mutasi Transaksi Bank (SI)",
+        "date-group-" + grp.tgl, cleanNpsn
+      ]);
+    }
+    replaceRowsForNpsn(sheetMap[SHEET_NAMES.REKENING_KORAN], 9, cleanNpsn, rekKoranRows);
+
+    // 7. Sheet 7 s/d 18: Perbulan
+    for (var mIdx = 0; mIdx < SHEET_NAMES.MONTHS.length; mIdx++) {
+      var monthName = SHEET_NAMES.MONTHS[mIdx];
+      var monthArr = Array.isArray(perBulanData[monthName]) ? perBulanData[monthName] : [];
+      var monthRows = [];
+      var mMonthStdPrefix = "";
+      for (var rIdx = 0; rIdx < monthArr.length; rIdx++) {
+        var mrItem = monthArr[rIdx];
+        var mrLevel = String(mrItem.level || "item");
+        var cleanKodeProg = normalizeKodeKegiatanGs(mrItem.kodeProgram || mrItem.kodeKegiatan || "", mrLevel, mMonthStdPrefix, true);
+        var mpStdMatch = cleanKodeProg.match(/^(\d{2})\./);
+        if (mpStdMatch) mMonthStdPrefix = mpStdMatch[1];
+
+        monthRows.push([
+          mrItem.no !== undefined ? mrItem.no : (rIdx + 1), String(mrItem.kodeRekening || ""),
+          cleanKodeProg, String(mrItem.uraian || ""),
+          mrItem.volume !== undefined && mrItem.volume !== null ? String(mrItem.volume) : "",
+          String(mrItem.satuan || ""),
+          mrItem.tarif !== undefined && mrItem.tarif !== null && mrItem.tarif !== "" ? Number(mrItem.tarif) : "",
+          Number(mrItem.jumlah || 0), mrLevel, cleanNpsn
+        ]);
+      }
+      replaceRowsForNpsn(sheetMap[monthName], 10, cleanNpsn, monthRows);
+    }
+
+    // 8. Sheet 20: Realisasi Distribusi
+    var distRows = [];
+    for (var dIdx = 0; dIdx < distribusiList.length; dIdx++) {
+      var dItem = distribusiList[dIdx];
+      distRows.push([
+        dIdx + 1,
+        String(dItem.tanggal || ""),
+        dItem.masterNo !== undefined && dItem.masterNo !== null ? String(dItem.masterNo) : "",
+        String(dItem.kodeRekening || ""),
+        normalizeKodeKegiatanGs(dItem.kodeKegiatan || "", "item", "", false),
+        String(dItem.namaBarang || ""),
+        Number(dItem.jumlahKeluar || 0),
+        String(dItem.penerima || ""),
+        String(dItem.keterangan || ""),
+        String(dItem.id || (dIdx + 1)),
+        cleanNpsn
+      ]);
+    }
+    replaceRowsForNpsn(sheetMap[SHEET_NAMES.DISTRIBUSI], 11, cleanNpsn, distRows);
+
+    // 9. Sheet 19: Role Pengguna
+    var userSheet = sheetMap[SHEET_NAMES.USERS];
+    var uLastRow = userSheet.getLastRow();
+    var foundUser = false;
+    var extraJsonStr = JSON.stringify({
+      schoolNpsn: cleanNpsn,
+      manualPurchasedMap: manualPurchasedMap,
+      manualKeteranganTextMap: manualKeteranganTextMap,
+      danaMasukList: danaMasukList,
+      customLogoUrl: customLogoUrl,
+      customKopSuratUrl: customKopSuratUrl
+    });
+
+    if (uLastRow > 1) {
+      var uRows = userSheet.getRange(2, 1, uLastRow - 1, 19).getValues();
+      var targetIdx = -1;
+      for (var u = 0; u < uRows.length; u++) {
+        var rUserOrNpsn = String(uRows[u][2] || "").trim();
+        var rExtra = {};
+        try { rExtra = JSON.parse(String(uRows[u][18] || "{}")); } catch (e) { rExtra = {}; }
+        if (rUserOrNpsn === cleanNpsn || String(rExtra.schoolNpsn || "").trim() === cleanNpsn) {
+          targetIdx = u;
+          break;
+        }
+      }
+      if (targetIdx === -1 && uRows.length > 0) {
+        targetIdx = 0;
+      }
+      if (targetIdx !== -1) {
+        // JANGAN menimpa kolom ROLE (index 1), USER / NPSN (index 2), dan PASSWORD (index 3)
+        // agar User & Password Admin yang ditulis langsung di Spreadsheet (Sheet Role Pengguna) tetap utuh.
+        uRows[targetIdx][4] = String(hInfo.namaSekolah || uRows[targetIdx][4] || "SDIT ANNISA");
+        uRows[targetIdx][5] = String(hInfo.kepalaSekolah || uRows[targetIdx][5] || "");
+        uRows[targetIdx][6] = String(hInfo.bendaharaSekolah || "");
+        uRows[targetIdx][7] = String(hInfo.alamat || "");
+        uRows[targetIdx][8] = String(hInfo.kabupaten || "Kota Bekasi");
+        uRows[targetIdx][9] = String(hInfo.provinsi || "Jawa Barat");
+        uRows[targetIdx][10] = String(hInfo.tahunAnggaran || "2026");
+        uRows[targetIdx][11] = String(hInfo.sumberDana || "BOS Reguler");
+        uRows[targetIdx][12] = String(hInfo.noRekening || "");
+        uRows[targetIdx][13] = String(hInfo.namaBank || "Bank BJB Kantor Cabang Jatiasih");
+        uRows[targetIdx][14] = String(hInfo.email || "");
+        uRows[targetIdx][15] = String(hInfo.noHp || "");
+        uRows[targetIdx][16] = Number(saldoAwal || 0);
+        uRows[targetIdx][17] = nowIso;
+        uRows[targetIdx][18] = extraJsonStr;
+        foundUser = true;
+        applyPlainTextColumnsGs(userSheet, SHEET_NAMES.USERS, uRows.length);
+        userSheet.getRange(2, 1, uRows.length, 19).setValues(uRows);
+      }
+    }
+
+    if (!foundUser) {
+      applyPlainTextColumnsGs(userSheet, SHEET_NAMES.USERS, userSheet.getLastRow() + 1);
+      // Kolom USER / NPSN (kolom 3) dan PASSWORD (kolom 4) dikosongkan agar diisi langsung di Spreadsheet
+      userSheet.appendRow([
+        userSheet.getLastRow(), "Admin", cleanNpsn || "20231556", "",
+        String(hInfo.namaSekolah || "SDIT ANNISA"), String(hInfo.kepalaSekolah || ""),
+        String(hInfo.bendaharaSekolah || ""), String(hInfo.alamat || ""),
+        String(hInfo.kabupaten || "Kota Bekasi"), String(hInfo.provinsi || "Jawa Barat"),
+        String(hInfo.tahunAnggaran || "2026"), String(hInfo.sumberDana || "BOS Reguler"),
+        String(hInfo.noRekening || ""), String(hInfo.namaBank || "Bank BJB Kantor Cabang Jatiasih"),
+        String(hInfo.email || ""), String(hInfo.noHp || ""), Number(saldoAwal || 0), nowIso, extraJsonStr
+      ]);
+    }
+
+    return { success: true, updatedAt: nowIso, npsn: cleanNpsn };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function apiGetLastUpdatedAt(npsn) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
+  if (!userSheet || userSheet.getLastRow() <= 1) return "";
+  var val = userSheet.getRange(2, 18).getValue();
+  return String(val || "");
+}

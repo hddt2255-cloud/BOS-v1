@@ -1,0 +1,6 @@
+{
+  "name": "SiBOS V1 - Aplikasi Pengelolaan Dana BOS & Belanja SI",
+  "description": "Aplikasi Pengelolaan Dana BOS, RKAS, Belanja SI, Surat Transfer, Rekap Serapan, Rekening Koran & Realisasi Distribusi dengan Sinkronisasi Cloud Otomatis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

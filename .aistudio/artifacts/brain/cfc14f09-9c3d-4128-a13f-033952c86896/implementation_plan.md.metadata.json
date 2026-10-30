@@ -1,0 +1,6 @@
+{
+  "summary":  "Revisi rencana implementasi SiBOS V1: Memastikan tidak ada password yang ditulis/di-hardcode di script mana pun (baik frontend maupun backend/Kode.gs). Seluruh password tersimpan dan diverifikasi murni dari Sheet 'Role Pengguna' di Spreadsheet/Database.",
+  "updatedAt":  "2026-10-30T01:25:56.920293509Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}
